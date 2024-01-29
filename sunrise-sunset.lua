@@ -380,12 +380,8 @@ local sleepTimeMs = 60*1000;
 local deviceName = "Belysning"
 local deviceManager = require "telldus.DeviceManager"
 
-local function shouldBeOn()
-    
-    -- get current date and time as number
-    local currentTime = os.time();
+local function shouldBeOn(currentTime)
     local dayOfYear = os.date("*t").yday
-
     print("Time is %s (UTC)", os.date("%X", currentTime))
     local dateComponents = os.date("*t", currentTime)
 
@@ -407,8 +403,12 @@ local function shouldBeOn()
     local lastMatch = intervals[1]
 
     for i, interval in ipairs(intervals) do 
-        local myTime = os.time({ year=dateComponents.year, month=dateComponents.month, day=dateComponents.day, hour=interval.hour, min=interval.min, sec=00 })
-        if currentTime < myTime then
+        local intervalTime = os.time({ year=dateComponents.year, month=dateComponents.month, day=dateComponents.day, hour=interval.hour, min=interval.min, sec=00 })
+        if intervalTime > currentTime then
+            if i == 1 then
+                print("Current time is before first entry, returning last entry: %02d:%02d (on: %s)", intervals[#intervals].hour, intervals[#intervals].min, intervals[#intervals].on)
+                return intervals[#intervals].on
+            end
             print("Found interval: %02d:%02d (on: %s)", lastMatch.hour, lastMatch.min, lastMatch.on)
             return lastMatch.on
         else 
@@ -431,7 +431,9 @@ function onInit()
     print("Device %s is on: %s", deviceName, currentState)
 
     while true do 
-        local newState = shouldBeOn()
+        -- get current date and time as number
+        local currentTime = os.time();
+        local newState = shouldBeOn(currentTime)
         if newState ~= currentState then
             if newState then 
                 print("Turning on %s...", deviceName)
@@ -450,3 +452,16 @@ function onInit()
         sleep(sleepTimeMs)
     end
 end
+
+-- For testing purposes
+-- local times = { 
+--     os.time({ year=2024, month=01, day=29, hour=00, min=30, sec=00 }),
+--     os.time({ year=2024, month=01, day=29, hour=06, min=30, sec=00 }),
+--     os.time({ year=2024, month=01, day=29, hour=10, min=00, sec=00 }),
+--     os.time({ year=2024, month=01, day=29, hour=16, min=00, sec=00 }),
+--     os.time({ year=2024, month=01, day=29, hour=23, min=10, sec=00 })
+-- }
+
+-- for i, time in ipairs(times) do
+--     print("Should be on: %s", shouldBeOn(time))
+-- end
