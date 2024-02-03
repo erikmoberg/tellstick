@@ -1,8 +1,10 @@
 ----------------------------------------------------------------------------
---
 -- Uses a fixed list of sunrise and sunset times to turn a device on or off.
---
 ----------------------------------------------------------------------------
+
+-- Define name of the device here to turn on/off.
+-- Find the `intervals` variable below to define the schedule.
+local deviceName = "EnterDeviceNameHere"
 
 --rough times for sunrise and sunset
 --https://aa.usno.navy.mil/calculated/rstt/year?ID=AA&year=2022&task=0&lat=59.2831&lon=17.904&label=here&tz=0.00&tz_sign=-1&submit=Get+Data
@@ -375,12 +377,14 @@ local sun = {
     { sunrise={ hour=7, min=45 }, sunset={ hour=13, min=58 } }
 }
 
-local currentState = false
+----------------------------------------------------------------------------
+
+local deviceIsOn = false
 local sleepTimeMs = 60*1000;
-local deviceName = "Belysning"
+local scriptName = "sunrise-sunset.lua"
 local deviceManager = require "telldus.DeviceManager"
 
-local function shouldBeOn(currentTime)
+function shouldBeOn(currentTime)
     local dayOfYear = os.date("*t").yday
     print("Time is %s (UTC)", os.date("%X", currentTime))
     local dateComponents = os.date("*t", currentTime)
@@ -392,32 +396,37 @@ local function shouldBeOn(currentTime)
         return false
     end
 
-    -- times are utc and schedule assumes times are increasing (so if off at sunset happens before 06:00, schedule will not work properly)
+    -- Define time intervals here (on/off, hour, minute, offset (+/-) in miutes).
+    -- Times are UTC and schedule assumes times are increasing, i.e. the first
+    -- time should appear first in the list, then the second, etc. This might cause
+    -- problems if e.g. the sun rises "too early" or similar.
     local intervals = {
-        { hour=06, min=00, on=true },
-        { hour=sunTimes.sunrise.hour+1, min=sunTimes.sunrise.min, on=false },
-        { hour=sunTimes.sunset.hour, min=sunTimes.sunset.min, on=true },
-        { hour=22, min=00, on=false }
+        { on=true,  hour=06, min=00 },
+        { on=false, hour=sunTimes.sunrise.hour, min=sunTimes.sunrise.min, offsetMin=30 },
+        { on=true,  hour=sunTimes.sunset.hour, min=sunTimes.sunset.min },
+        { on=false, hour=22, min=00 }
     }
 
-    local lastMatch = intervals[1]
-
+    local match = intervals[1]
     for i, interval in ipairs(intervals) do 
         local intervalTime = os.time({ year=dateComponents.year, month=dateComponents.month, day=dateComponents.day, hour=interval.hour, min=interval.min, sec=00 })
+        if interval.offsetMin ~= nil then
+            intervalTime = intervalTime + interval.offsetMin * 60
+        end
         if intervalTime > currentTime then
             if i == 1 then
-                print("Current time is before first entry, returning last entry: %02d:%02d (on: %s)", intervals[#intervals].hour, intervals[#intervals].min, intervals[#intervals].on)
-                return intervals[#intervals].on
+                -- We are before the first interval, return the last interval.
+                -- For example, time is 04:00 but first entry is at 06:00. We then return the entry from the evening before, such as 22:00.
+                match = intervals[#intervals];
             end
-            print("Found interval: %02d:%02d (on: %s)", lastMatch.hour, lastMatch.min, lastMatch.on)
-            return lastMatch.on
+            break;
         else 
-            lastMatch = interval
+            match = interval
         end
     end
 
-    print("Found no interval, returning: %02d:%02d (on: %s)", lastMatch.hour, lastMatch.min, lastMatch.on)
-    return lastMatch.on
+    print("Found interval, returning: %02d:%02d, offset: %s (on: %s)", match.hour, match.min, match.offsetMin, match.on)
+    return match.on
 end
 
 function onInit()
@@ -427,41 +436,25 @@ function onInit()
         print("Could not find the device %s", device)
         return
     end
-    currentState = device:state() == 1
-    print("Device %s is on: %s", deviceName, currentState)
+    deviceIsOn = device:state() == 1
+    print("Device %s is on: %s", deviceName, deviceIsOn)
 
-    while true do 
-        -- get current date and time as number
-        local currentTime = os.time();
-        local newState = shouldBeOn(currentTime)
-        if newState ~= currentState then
-            if newState then 
+    while true do
+        local deviceShouldBeOn = shouldBeOn(os.time())
+        if deviceShouldBeOn ~= deviceIsOn then
+            if deviceShouldBeOn then
                 print("Turning on %s...", deviceName)
-                device:command("turnon", nil, "timebased3.lua")
-                currentState = true
+                device:command("turnon", nil, scriptName)
             else 
                 print("Turning off %s...", deviceName)
-                device:command("turnoff", nil, "timebased3.lua")
-                currentState = false
-            end 
+                device:command("turnoff", nil, scriptName)
+            end
+            deviceIsOn = deviceShouldBeOn
         else 
-            print("Device %s is already in state %s, doing nothing.", deviceName, newState)
+            print("Device %s is already in state %s, doing nothing.", deviceName, deviceShouldBeOn)
         end
 
         print("Sleeping %s ms", sleepTimeMs)
         sleep(sleepTimeMs)
     end
 end
-
--- For testing purposes
--- local times = { 
---     os.time({ year=2024, month=01, day=29, hour=00, min=30, sec=00 }),
---     os.time({ year=2024, month=01, day=29, hour=06, min=30, sec=00 }),
---     os.time({ year=2024, month=01, day=29, hour=10, min=00, sec=00 }),
---     os.time({ year=2024, month=01, day=29, hour=16, min=00, sec=00 }),
---     os.time({ year=2024, month=01, day=29, hour=23, min=10, sec=00 })
--- }
-
--- for i, time in ipairs(times) do
---     print("Should be on: %s", shouldBeOn(time))
--- end
